@@ -3,7 +3,7 @@ RunPod Serverless handler for GLM-OCR via vLLM.
 
 Starts vLLM HTTP server in the background, waits for it to be ready,
 then forwards incoming RunPod jobs to the local OpenAI-compatible API.
-new test
+new test 2
 """
 
 import os
