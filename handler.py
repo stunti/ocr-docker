@@ -155,7 +155,11 @@ def _extract_job_image_and_prompt(job_input):
     if not isinstance(job_input, dict):
         return None, ""
 
-    image_ref = job_input.get("url") or job_input.get("image")
+    image_ref = (
+        job_input.get("url")
+        or job_input.get("image")
+        or job_input.get("pdf_url")
+    )
     prompt = job_input.get("prompt")
     if isinstance(prompt, str) and prompt.strip():
         prompt_parts.append(prompt.strip())
@@ -274,6 +278,33 @@ def _resize_image_to_file_path(image_bytes, max_side):
         return tmp.name, (width, height), new_size
 
 
+def _decode_pdf_data_to_temp_file(pdf_data_b64, job_id):
+    """
+    Decode a base64-encoded image (pdf_data from step1_glm-ocr.sh --file)
+    into a temporary file and return (path, cleanup_paths).
+    """
+    try:
+        image_bytes = base64.b64decode(pdf_data_b64)
+        tmp = tempfile.NamedTemporaryFile(
+            mode="wb",
+            suffix=".bin",
+            prefix="glmocr_b64_",
+            delete=False,
+        )
+        with tmp:
+            tmp.write(image_bytes)
+        log.info(
+            "Job %s: decoded pdf_data (%d bytes) -> %s",
+            job_id,
+            len(image_bytes),
+            tmp.name,
+        )
+        return tmp.name, [tmp.name]
+    except Exception as exc:
+        log.warning("Job %s: failed to decode pdf_data: %s", job_id, exc)
+        return None, []
+
+
 def _prepare_image_for_sdk(image_ref, job_id):
     """Return image path/url for SDK parse and list of temp files to clean up."""
     cleanup_paths = []
@@ -325,10 +356,19 @@ def _parse_with_sdk(job_input, job_id):
         return None
 
     image_ref, prompt = _extract_job_image_and_prompt(job_input)
+
+    # Handle base64-encoded image data sent via the --file path of step1_glm-ocr.sh.
+    extra_cleanup = []
+    if not image_ref and isinstance(job_input, dict) and job_input.get("pdf_data"):
+        image_ref, extra_cleanup = _decode_pdf_data_to_temp_file(
+            job_input["pdf_data"], job_id
+        )
+
     if not image_ref:
         return None
 
     image_input, cleanup_paths = _prepare_image_for_sdk(image_ref, job_id)
+    cleanup_paths.extend(extra_cleanup)
     try:
         # Some SDK versions support prompt kwarg; fall back to image-only parse.
         if prompt:
